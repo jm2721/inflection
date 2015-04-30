@@ -1,0 +1,91 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+Outputs a fully inflected version of a lemmatized test set (provided on STDIN). 
+If training data is provided, it will use a unigram model to select the form.
+
+usage: cat LEMMA_FILE | python inflect
+       [-t TRAINING_PREFIX] [-l LEMMA_SUFFIX] [-w WORD_SUFFIX]
+"""
+import random
+import argparse
+import codecs
+import sys
+import os
+from math import log
+from collections import defaultdict
+from itertools import izip
+
+PARSER = argparse.ArgumentParser(description="Inflect a lemmatized corpus")
+PARSER.add_argument("-t", type=str, default="data/train", help="training data prefix")
+PARSER.add_argument("-l", type=str, default="lemma", help="lemma file suffix")
+PARSER.add_argument("-w", type=str, default="form", help="word file suffix")
+args = PARSER.parse_args()
+
+# Python sucks at UTF-8
+sys.stdout = codecs.getwriter('utf-8')(sys.stdout) 
+sys.stdin = codecs.getreader('utf-8')(sys.stdin) 
+
+def read_language_model():
+  model = utf8read("language_models/lm_europarl")
+  lm = defaultdict(float)
+  for line in model:
+    parsed = line.split(" ||| ")
+    try:
+      lm[(parsed[0].split()[0], parsed[0].split()[1])] = parsed[1]
+    except:
+      pass
+  return lm
+
+def compute_lm_score(lm, sentence):
+  logprob = 0
+  sentence = "<s> " + sentence + " </s>"
+  sentence = sentence.split()
+  
+  for i, word in enumerate(sentence[:-1]):
+    logprob += float(lm[(sentence[i+1], word)])
+  return logprob
+  
+def utf8read(file): return codecs.open(file, 'r', 'utf-8')
+def combine(a, b): return '%s.%s' % (a, b)
+
+def inflections(lm, word1, lemma):
+    
+    if LEMMAS.has_key(lemma):
+      all_possibilities = sorted(LEMMAS[lemma].keys(), lambda x,y: cmp(LEMMAS[lemma][y], LEMMAS[lemma][x]))
+    else:
+      all_possibilities = [lemma]
+  
+    best_score = -1e300
+    for i in all_possibilities:
+      if float(lm[(i, word1)]) > best_score:
+        best_word = i
+        best_score = float(lm[(i, word1)])
+    
+    return best_word
+
+if __name__ == '__main__':
+    language_model = read_language_model()
+
+    # Build a simple unigram model on the training data
+    LEMMAS = defaultdict(defaultdict)
+    if args.t:
+        # Build the LEMMAS hash, a two-level dictionary mapping lemmas to inflections to counts
+        for words, lemmas in izip(utf8read(combine(args.t, args.w)), utf8read(combine(args.t, args.l))):
+            for word, lemma in izip(words.rstrip().lower().split(), lemmas.rstrip().lower().split()):
+                LEMMAS[lemma][word] = LEMMAS[lemma].get(word,0) + 1 
+
+    # Choose the most best inflection
+    # based on the model for each word and output them as a sentence
+    for line in sys.stdin:
+      spl = line.strip().split()
+      sentence_bigram = "<s>"
+      best_sentence = ""
+      all_sentences = []
+
+      sentence_bigram += inflections(language_model, "<s>", spl[0]) + " "
+      for i, element in enumerate(spl[:-1]):
+        sentence_bigram += inflections(language_model, element, spl[i+1]) + " "
+      sentence_bigram += inflections(language_model, spl[-1], "</s>")
+      
+      print sentence_bigram[3:-4]
